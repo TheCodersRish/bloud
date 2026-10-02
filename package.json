@@ -1,0 +1,71 @@
+{
+  "name": "bloud",
+  "version": "1.1.1",
+  "description": "Desktop app for Amazon Luna with controller-friendly settings",
+  "main": "src/main.js",
+  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/TheCodersRish/bloud.git"
+  },
+  "homepage": "https://github.com/TheCodersRish/bloud#readme",
+  "scripts": {
+    "postinstall": "node scripts/ensure-electron.js && node scripts/patch-electron-mac.js",
+    "start": "electron .",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder --mac",
+    "dist:linux": "electron-builder --linux",
+    "dist:all": "electron-builder --mac --linux",
+    "install-app": "npm run dist && rm -rf /Applications/Bloud.app && cp -R dist/mac-arm64/Bloud.app /Applications/Bloud.app",
+    "install-linux": "bash ./install-bloud.sh --local"
+  },
+  "build": {
+    "appId": "com.bloud.luna",
+    "productName": "Bloud",
+    "mac": {
+      "category": "public.app-category.games",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "darkModeSupport": true,
+      "hardenedRuntime": true,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "extendInfo": {
+        "NSBluetoothAlwaysUsageDescription": "Bloud uses Bluetooth so you can sign in with passkeys and use wireless game controllers.",
+        "NSBluetoothPeripheralUsageDescription": "Bloud uses Bluetooth so you can sign in with passkeys and use wireless game controllers.",
+        "NSFaceIDUsageDescription": "Bloud uses Touch ID so you can sign in to Amazon with your passkey."
+      }
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Game",
+      "artifactName": "Bloud-${version}-${arch}.${ext}",
+      "executableName": "bloud",
+      "synopsis": "Amazon Luna desktop client",
+      "description": "Desktop app for Amazon Luna with controller-friendly settings",
+      "desktop": {
+        "StartupWMClass": "Bloud"
+      }
+    }
+  },
+  "dependencies": {
+    "playwright-core": "^1.51.0"
+  },
+  "devDependencies": {
+    "@electron/get": "^4.0.2",
+    "electron": "^35.7.5",
+    "electron-builder": "^25.1.8",
+    "extract-zip": "^2.0.1"
+  },
+  "allowScripts": {
+    "electron@35.7.5": true
+  }
+}

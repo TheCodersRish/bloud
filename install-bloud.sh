@@ -31,7 +31,7 @@ EOF
 }
 
 log() {
-  printf '==> %s\n' "$*"
+  printf '==> %s\n' "$*" >&2
 }
 
 die() {
@@ -245,14 +245,14 @@ install_appimage() {
   write_desktop_entry "$wrapper"
 
   log "Done. Start Bloud from your app menu or run:"
-  printf '    %s\n' "$wrapper"
+  printf '    %s\n' "$wrapper" >&2
   case ":$PATH:" in
     *":${INSTALL_BIN}:"*) ;;
     *)
-      printf '\nNote: add %s to your PATH (Bazzite/KDE often already includes ~/.local/bin):\n  echo export PATH="%s:\$PATH" >> ~/.profile\n' "$INSTALL_BIN" "$INSTALL_BIN"
+      printf '\nNote: add %s to your PATH (Bazzite/KDE often already includes ~/.local/bin):\n  echo export PATH="%s:\$PATH" >> ~/.profile\n' "$INSTALL_BIN" "$INSTALL_BIN" >&2
       ;;
   esac
-  printf '\nFor passkey sign-in, install Google Chrome or Microsoft Edge (Flatpak or native).\n'
+  printf '\nFor passkey sign-in, install Google Chrome or Microsoft Edge (Flatpak or native).\n' >&2
 }
 
 cleanup_tmp() {
@@ -300,6 +300,13 @@ main() {
       ;;
     release)
       TMP_APPIMAGE="$(download_release_appimage)"
+      # mktemp path must be the only stdout from download_release_appimage (logs go to stderr).
+      case "$TMP_APPIMAGE" in
+        /**.AppImage) ;;
+        *)
+          die "Internal error: bad download path (re-run installer). Got: $TMP_APPIMAGE"
+          ;;
+      esac
       trap cleanup_tmp EXIT
       install_appimage "$TMP_APPIMAGE"
       ;;

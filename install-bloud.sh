@@ -112,9 +112,20 @@ find_local_appimage() {
   printf '%s' "$newest"
 }
 
+github_curl() {
+  # GitHub API expects a User-Agent; direct downloads benefit from retries.
+  curl -fsSL --retry 3 --retry-delay 2 -A "bloud-installer/1.0 (+https://github.com/TheCodersRish/bloud)" "$@"
+}
+
+parse_release_tag() {
+  json="$1"
+  tag="$(printf '%s' "$json" | grep '"tag_name"' | head -n 1 | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')"
+  [ -n "$tag" ] || return 1
+  printf '%s' "$tag"
+}
+
 download_release_appimage() {
   need_cmd curl
-  need_cmd python3
   resolve_repo
   [ -n "$REPO" ] || die "Set BLOUD_GITHUB_REPO=owner/repo or run from a git clone with GitHub origin"
 
@@ -126,41 +137,44 @@ download_release_appimage() {
     api="${api}/latest"
   fi
 
-  log "Fetching release metadata from GitHub ($REPO)..."
-  json="$(curl -fsSL -H "Accept: application/vnd.github+json" "$api")"
+  log "Checking release on GitHub ($REPO)..."
+  json=""
+  if ! json="$(github_curl -H "Accept: application/vnd.github+json" "$api")"; then
+    die "Could not load release info from GitHub (network or API limit). Try again in a minute or download the AppImage manually from https://github.com/${REPO}/releases"
+  fi
 
-  asset_name="$(printf '%s' "$json" | python3 -c '
-import json, sys, fnmatch
-arch = sys.argv[1]
-patterns = {
-    "x86_64": ["Bloud-*-x64.AppImage", "Bloud-*-x86_64.AppImage"],
-    "arm64": ["Bloud-*-arm64.AppImage", "Bloud-*-aarch64.AppImage"],
-}[arch]
-data = json.load(sys.stdin)
-for a in data.get("assets") or []:
-    name = a.get("name") or ""
-    for pat in patterns:
-        if fnmatch.fnmatch(name, pat):
-            print(name)
-            sys.exit(0)
-sys.exit(1)
-' "$arch")" || die "No AppImage for $arch in this release. Build with: npm run dist:linux"
+  tag="$(parse_release_tag "$json")" || die "Could not read release version from GitHub."
+  ver="${tag#v}"
 
-  url="$(printf '%s' "$json" | python3 -c '
-import json, sys
-want = sys.argv[1]
-data = json.load(sys.stdin)
-for a in data.get("assets") or []:
-    if a.get("name") == want:
-        print(a["browser_download_url"])
-        sys.exit(0)
-sys.exit(1)
-' "$asset_name")"
+  case "$arch" in
+    x86_64) candidates="Bloud-${ver}-x86_64.AppImage Bloud-${ver}-x64.AppImage" ;;
+    arm64) candidates="Bloud-${ver}-arm64.AppImage Bloud-${ver}-aarch64.AppImage" ;;
+    *) die "Unsupported CPU: $arch" ;;
+  esac
 
   tmp="$(mktemp "${TMPDIR:-/tmp}/bloud.XXXXXX.AppImage")"
-  log "Downloading $asset_name ..."
-  curl -fsSL -o "$tmp" "$url"
-  printf '%s' "$tmp"
+  downloaded=0
+
+  for asset_name in $candidates; do
+    url="https://github.com/${REPO}/releases/download/${tag}/${asset_name}"
+    log "Downloading ${asset_name} ..."
+    if github_curl -o "$tmp" "$url"; then
+      if verify_appimage "$tmp"; then
+        downloaded=1
+        break
+      fi
+      log "Download failed validation, trying next filename..."
+    else
+      log "Not found at ${url}"
+    fi
+  done
+
+  if [ "$downloaded" -ne 1 ]; then
+    rm -f "$tmp"
+    die "No AppImage for ${arch} in release ${tag}. Open https://github.com/${REPO}/releases and download the AppImage for your CPU."
+  fi
+
+  TMP_APPIMAGE="$tmp"
 }
 
 build_from_source() {
@@ -217,21 +231,25 @@ EOF
 
 verify_appimage() {
   path="$1"
-  [ -f "$path" ] || die "Missing AppImage at $path"
-  [ -s "$path" ] || die "AppImage at $path is empty — re-run the installer"
+  [ -f "$path" ] || return 1
+  [ -s "$path" ] || return 1
+  size="$(wc -c <"$path" | tr -d ' ')"
+  [ "$size" -gt 1000000 ] || return 1
   if command -v file >/dev/null 2>&1; then
     kind="$(file -b "$path" 2>/dev/null || true)"
     case "$kind" in
-      *AppImage* | *ELF* | *executable*) ;;
+      *AppImage* | *ELF* | *executable* | *Squashfs* | *squashfs* | *XZ* | *data*) ;;
       *)
-        die "File does not look like an AppImage: $path ($kind)"
+        log "Note: unexpected file type ($kind), continuing anyway."
         ;;
     esac
   fi
+  return 0
 }
 
 install_appimage() {
   src="$1"
+  [ -n "$src" ] || die "AppImage path missing (install bug — report at https://github.com/TheCodersRish/bloud/issues)"
   [ -f "$src" ] || die "AppImage not found: $src"
 
   mkdir -p "$INSTALL_BIN" "$APPIMAGE_HOME"
@@ -239,7 +257,7 @@ install_appimage() {
   log "Installing AppImage to $dest"
   cp -f "$src" "$dest"
   chmod +x "$dest"
-  verify_appimage "$dest"
+  verify_appimage "$dest" || die "Installed AppImage failed validation at $dest"
 
   wrapper="$(install_launcher "$dest")"
   write_desktop_entry "$wrapper"
@@ -255,10 +273,13 @@ install_appimage() {
   printf '\nFor passkey sign-in, install Google Chrome or Microsoft Edge (Flatpak or native).\n' >&2
 }
 
+TMP_APPIMAGE=""
+
 cleanup_tmp() {
   if [ -n "${TMP_APPIMAGE:-}" ] && [ -f "$TMP_APPIMAGE" ]; then
     rm -f "$TMP_APPIMAGE"
   fi
+  TMP_APPIMAGE=""
 }
 
 main() {
@@ -299,14 +320,8 @@ main() {
       install_appimage "$appimage_path"
       ;;
     release)
-      TMP_APPIMAGE="$(download_release_appimage)"
-      # mktemp path must be the only stdout from download_release_appimage (logs go to stderr).
-      case "$TMP_APPIMAGE" in
-        /**.AppImage) ;;
-        *)
-          die "Internal error: bad download path (re-run installer). Got: $TMP_APPIMAGE"
-          ;;
-      esac
+      download_release_appimage
+      [ -n "$TMP_APPIMAGE" ] && [ -f "$TMP_APPIMAGE" ] || die "Download failed before install."
       trap cleanup_tmp EXIT
       install_appimage "$TMP_APPIMAGE"
       ;;

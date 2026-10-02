@@ -1,7 +1,7 @@
-#!/usr/bin/env bash
+#!/bin/sh
 # Install Bloud on Linux (Fedora, Bazzite, SteamOS, Ubuntu, etc.).
 # Safe on immutable systems: everything goes under ~/.local — no rpm/dpkg required.
-set -euo pipefail
+set -eu
 
 VERSION="${BLOUD_VERSION:-}"
 REPO="${BLOUD_GITHUB_REPO:-TheCodersRish/bloud}"
@@ -26,8 +26,7 @@ Environment:
 
 Examples:
   ./install-bloud.sh --local
-  BLOUD_GITHUB_REPO=myuser/bloud ./install-bloud.sh
-  curl -fsSL https://raw.githubusercontent.com/myuser/bloud/main/install-bloud.sh | bash
+  curl -fsSL https://raw.githubusercontent.com/TheCodersRish/bloud/main/install-bloud.sh | sh
 EOF
 }
 
@@ -45,7 +44,6 @@ need_cmd() {
 }
 
 detect_arch() {
-  local machine
   machine="$(uname -m)"
   case "$machine" in
     x86_64 | amd64) echo "x86_64" ;;
@@ -55,77 +53,80 @@ detect_arch() {
 }
 
 script_dir() {
-  local src="${BASH_SOURCE[0]}"
-  while [[ -L "$src" ]]; do
-    local dir
-    dir="$(cd "$(dirname "$src")" && pwd)"
-    src="$(readlink "$src")"
-    [[ "$src" != /* ]] && src="$dir/$src"
+  me="$0"
+  case "$me" in
+    /*) ;;
+    *) me="$(pwd)/$me" ;;
+  esac
+  while [ -L "$me" ]; do
+    link="$(readlink "$me")"
+    case "$link" in
+      /*) me="$link" ;;
+      *) me="$(dirname "$me")/$link" ;;
+    esac
   done
-  cd "$(dirname "$src")" && pwd
+  dirname "$me"
 }
 
 resolve_repo() {
-  if [[ -n "$REPO" ]]; then
-    return
+  if [ -n "$REPO" ]; then
+    return 0
   fi
-  local root
   root="$(script_dir)"
   if git -C "$root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    local url
     url="$(git -C "$root" config --get remote.origin.url 2>/dev/null || true)"
-    if [[ "$url" =~ github\.com[:/]([^/]+)/([^/.]+) ]]; then
-      REPO="${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"
-    fi
+    case "$url" in
+      *github.com:*/*)
+        REPO="$(printf '%s' "$url" | sed -n 's#.*github.com[:/]\([^/]*\)/\([^/.]*\).*#\1/\2#p' | head -n 1)"
+        ;;
+    esac
   fi
-}
-
-appimage_globs_for_arch() {
-  local arch="$1"
-  case "$arch" in
-    x86_64) printf '%s\n' "Bloud-*-x64.AppImage" "Bloud-*-x86_64.AppImage" ;;
-    arm64) printf '%s\n' "Bloud-*-arm64.AppImage" "Bloud-*-aarch64.AppImage" ;;
-    *) die "Unknown arch: $arch" ;;
-  esac
 }
 
 find_local_appimage() {
-  local root arch
   root="$(script_dir)"
   arch="$(detect_arch)"
-  local matches=() pattern
-  shopt -s nullglob
-  while IFS= read -r pattern; do
-    matches+=("$root"/dist/$pattern)
-  done < <(appimage_globs_for_arch "$arch")
-  shopt -u nullglob
-  if ((${#matches[@]} == 0)); then
+  newest=""
+  case "$arch" in
+    x86_64)
+      patterns="Bloud-*-x64.AppImage Bloud-*-x86_64.AppImage"
+      ;;
+    arm64)
+      patterns="Bloud-*-arm64.AppImage Bloud-*-aarch64.AppImage"
+      ;;
+    *)
+      die "Unknown arch: $arch"
+      ;;
+  esac
+  for pattern in $patterns; do
+    for f in "$root"/dist/$pattern; do
+      [ -f "$f" ] || continue
+      if [ -z "$newest" ] || [ "$f" -nt "$newest" ]; then
+        newest="$f"
+      fi
+    done
+  done
+  if [ -z "$newest" ]; then
     die "No AppImage in $root/dist/. Run: npm run dist:linux"
   fi
-  local newest="${matches[0]}"
-  local f
-  for f in "${matches[@]}"; do
-    [[ "$f" -nt "$newest" ]] && newest="$f"
-  done
   printf '%s' "$newest"
 }
 
 download_release_appimage() {
   need_cmd curl
+  need_cmd python3
   resolve_repo
-  [[ -n "$REPO" ]] || die "Set BLOUD_GITHUB_REPO=owner/repo or run from a git clone with GitHub origin"
+  [ -n "$REPO" ] || die "Set BLOUD_GITHUB_REPO=owner/repo or run from a git clone with GitHub origin"
 
-  local arch api url asset_name tmp
   arch="$(detect_arch)"
   api="https://api.github.com/repos/${REPO}/releases"
-  if [[ -n "$VERSION" ]]; then
+  if [ -n "$VERSION" ]; then
     api="${api}/tags/${VERSION}"
   else
     api="${api}/latest"
   fi
 
   log "Fetching release metadata from GitHub ($REPO)..."
-  local json
   json="$(curl -fsSL -H "Accept: application/vnd.github+json" "$api")"
 
   asset_name="$(printf '%s' "$json" | python3 -c '
@@ -163,7 +164,6 @@ sys.exit(1)
 }
 
 build_from_source() {
-  local root
   root="$(script_dir)"
   need_cmd npm
   need_cmd node
@@ -175,7 +175,7 @@ build_from_source() {
 }
 
 write_desktop_entry() {
-  local appimage="$1"
+  appimage="$1"
   mkdir -p "$DESKTOP_DIR" "$ICON_DIR"
   cat >"${DESKTOP_DIR}/bloud.desktop" <<EOF
 [Desktop Entry]
@@ -195,18 +195,18 @@ EOF
 }
 
 install_appimage() {
-  local src="$1"
-  [[ -f "$src" ]] || die "AppImage not found: $src"
+  src="$1"
+  [ -f "$src" ] || die "AppImage not found: $src"
 
   mkdir -p "$INSTALL_BIN" "$APPIMAGE_HOME"
-  local dest="${APPIMAGE_HOME}/Bloud.AppImage"
+  dest="${APPIMAGE_HOME}/Bloud.AppImage"
   log "Installing AppImage to $dest"
   cp -f "$src" "$dest"
   chmod +x "$dest"
 
-  local wrapper="${INSTALL_BIN}/bloud"
+  wrapper="${INSTALL_BIN}/bloud"
   cat >"$wrapper" <<EOF
-#!/usr/bin/env bash
+#!/bin/sh
 exec "${dest}" "\$@"
 EOF
   chmod +x "$wrapper"
@@ -214,25 +214,34 @@ EOF
   write_desktop_entry "$dest"
 
   log "Done. Start Bloud from your app menu or run: bloud"
-  if [[ ":$PATH:" != *":${INSTALL_BIN}:"* ]]; then
-    printf '\nNote: add %s to your PATH (Bazzite/KDE often already includes ~/.local/bin):\n  echo export PATH="%s:\$PATH" >> ~/.bashrc\n' "$INSTALL_BIN" "$INSTALL_BIN"
-  fi
+  case ":$PATH:" in
+    *":${INSTALL_BIN}:"*) ;;
+    *)
+      printf '\nNote: add %s to your PATH (Bazzite/KDE often already includes ~/.local/bin):\n  echo export PATH="%s:\$PATH" >> ~/.profile\n' "$INSTALL_BIN" "$INSTALL_BIN"
+      ;;
+  esac
   printf '\nFor passkey sign-in, install Google Chrome or Microsoft Edge (Flatpak or native).\n'
 }
 
+cleanup_tmp() {
+  if [ -n "${TMP_APPIMAGE:-}" ] && [ -f "$TMP_APPIMAGE" ]; then
+    rm -f "$TMP_APPIMAGE"
+  fi
+}
+
 main() {
-  [[ "$(uname -s)" == "Linux" ]] || die "This installer is for Linux only. On macOS use: npm install && npm start"
+  [ "$(uname -s)" = "Linux" ] || die "This installer is for Linux only. On macOS use: npm install && npm start"
 
-  local mode="release"
-  local appimage_path=""
+  mode="release"
+  appimage_path=""
 
-  while [[ $# -gt 0 ]]; do
+  while [ $# -gt 0 ]; do
     case "$1" in
       --from-source) mode="source" ;;
       --local) mode="local" ;;
       --appimage)
         shift
-        [[ $# -gt 0 ]] || die "--appimage requires a path"
+        [ $# -gt 0 ] || die "--appimage requires a path"
         appimage_path="$1"
         mode="path"
         ;;
@@ -258,10 +267,9 @@ main() {
       install_appimage "$appimage_path"
       ;;
     release)
-      local tmp
-      tmp="$(download_release_appimage)"
-      trap 'rm -f "$tmp"' EXIT
-      install_appimage "$tmp"
+      TMP_APPIMAGE="$(download_release_appimage)"
+      trap cleanup_tmp EXIT
+      install_appimage "$TMP_APPIMAGE"
       ;;
   esac
 }

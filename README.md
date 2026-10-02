@@ -7,7 +7,13 @@ Desktop wrapper for [Amazon Luna](https://luna.amazon.com) on **macOS** and **Li
 On Bazzite KDE, Fedora, SteamOS, Ubuntu, and other distros:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/TheCodersRish/bloud/main/install-bloud.sh | bash
+curl -fsSL https://raw.githubusercontent.com/TheCodersRish/bloud/main/install-bloud.sh | sh
+```
+
+If your shell says `sh: not found`, use the full path (works on Bazzite KDE):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/TheCodersRish/bloud/main/install-bloud.sh | /bin/sh
 ```
 
 That downloads the latest release AppImage, installs it under `~/.local`, and adds **Bloud** to your app menu. No `sudo` required.

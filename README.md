@@ -18,6 +18,18 @@ curl -fsSL https://raw.githubusercontent.com/TheCodersRish/bloud/main/install-bl
 
 That downloads the latest release AppImage, installs it under `~/.local`, and adds **Bloud** to your app menu. No `sudo` required.
 
+**Open Bloud** (after install):
+
+```bash
+~/.local/bin/bloud
+```
+
+If that ever fails, reinstall the launcher (same as install):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/TheCodersRish/bloud/main/install-bloud.sh | /bin/sh
+```
+
 ## Quick start (developers)
 
 **Double-click** `Open Bloud.command` in Finder (first run installs dependencies), or:

@@ -175,14 +175,15 @@ build_from_source() {
 }
 
 write_desktop_entry() {
-  appimage="$1"
+  wrapper="$1"
   mkdir -p "$DESKTOP_DIR" "$ICON_DIR"
   cat >"${DESKTOP_DIR}/bloud.desktop" <<EOF
 [Desktop Entry]
 Type=Application
 Name=Bloud
 Comment=Amazon Luna desktop client
-Exec=${appimage} %U
+Exec=${wrapper} %U
+TryExec=${wrapper}
 Icon=bloud
 Terminal=false
 Categories=Game;
@@ -191,6 +192,41 @@ EOF
   chmod 644 "${DESKTOP_DIR}/bloud.desktop"
   if command -v update-desktop-database >/dev/null 2>&1; then
     update-desktop-database "${HOME}/.local/share/applications" 2>/dev/null || true
+  fi
+}
+
+install_launcher() {
+  dest="$1"
+  wrapper="${INSTALL_BIN}/bloud"
+  mkdir -p "$INSTALL_BIN"
+  cat >"$wrapper" <<EOF
+#!/bin/sh
+APPIMAGE="${dest}"
+if [ ! -f "\$APPIMAGE" ]; then
+  printf 'Bloud is not installed at %s\\n' "\$APPIMAGE" >&2
+  printf 'Run: curl -fsSL https://raw.githubusercontent.com/TheCodersRish/bloud/main/install-bloud.sh | /bin/sh\\n' >&2
+  exit 127
+fi
+chmod +x "\$APPIMAGE" 2>/dev/null || true
+export APPIMAGE_EXTRACT_AND_RUN=1
+exec "\$APPIMAGE" "\$@"
+EOF
+  chmod +x "$wrapper"
+  printf '%s' "$wrapper"
+}
+
+verify_appimage() {
+  path="$1"
+  [ -f "$path" ] || die "Missing AppImage at $path"
+  [ -s "$path" ] || die "AppImage at $path is empty — re-run the installer"
+  if command -v file >/dev/null 2>&1; then
+    kind="$(file -b "$path" 2>/dev/null || true)"
+    case "$kind" in
+      *AppImage* | *ELF* | *executable*) ;;
+      *)
+        die "File does not look like an AppImage: $path ($kind)"
+        ;;
+    esac
   fi
 }
 
@@ -203,17 +239,13 @@ install_appimage() {
   log "Installing AppImage to $dest"
   cp -f "$src" "$dest"
   chmod +x "$dest"
+  verify_appimage "$dest"
 
-  wrapper="${INSTALL_BIN}/bloud"
-  cat >"$wrapper" <<EOF
-#!/bin/sh
-exec "${dest}" "\$@"
-EOF
-  chmod +x "$wrapper"
+  wrapper="$(install_launcher "$dest")"
+  write_desktop_entry "$wrapper"
 
-  write_desktop_entry "$dest"
-
-  log "Done. Start Bloud from your app menu or run: bloud"
+  log "Done. Start Bloud from your app menu or run:"
+  printf '    %s\n' "$wrapper"
   case ":$PATH:" in
     *":${INSTALL_BIN}:"*) ;;
     *)
